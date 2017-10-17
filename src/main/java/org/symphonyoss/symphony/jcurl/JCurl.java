@@ -132,6 +132,7 @@ public class JCurl {
   private String httpsProxyHost;
   private String httpsProxyPort;
   private String nonProxyHosts;
+  private SSLContext sslContext ;
   private int verbosity;
   private int connectTimeout;
   private int readTimeout;
@@ -480,13 +481,15 @@ public class JCurl {
      */
     public JCurl build() {
       instance.expectedResponseSet.add(200);
-
+      /*
+      // we should NOT override the default SSLContext of the JVM
       setSystemProperty("javax.net.ssl.keyStore", instance.keyStore);
       setSystemProperty("javax.net.ssl.keyStoreType", instance.storeType);
       setSystemProperty("javax.net.ssl.keyStorePassword", instance.storePass);
       setSystemProperty("javax.net.ssl.trustStore", instance.trustStore);
       setSystemProperty("javax.net.ssl.trustStoreType", instance.trustType);
       setSystemProperty("javax.net.ssl.trustStorePassword", instance.trustPass);
+      */
       setSystemProperty("http.proxyHost", instance.httpProxyHost);
       setSystemProperty("http.proxyPort", instance.httpProxyPort);
       setSystemProperty("https.proxyHost", instance.httpsProxyHost);
@@ -541,8 +544,11 @@ public class JCurl {
 
         SSLContext context = SSLContext.getInstance("SSL");
         context.init(keyManagers, trustManagers, new SecureRandom());
-        SSLContext.setDefault(context);
-        HttpsURLConnection.setDefaultSSLSocketFactory(context.getSocketFactory());
+        instance.sslContext = context ;
+        
+        // we should NOT override the default SSLContext of the JVM
+        // SSLContext.setDefault(context);        
+        // HttpsURLConnection.setDefaultSSLSocketFactory(context.getSocketFactory());
       } catch (NoSuchAlgorithmException | KeyManagementException e) {
         System.err.println("Failed to initialize SSL context: " + e.getMessage());
       }
@@ -1394,6 +1400,11 @@ public class JCurl {
     }
 
     HttpURLConnection con = (HttpURLConnection) rawCon;
+    if(con instanceof HttpsURLConnection){
+      HttpsURLConnection httpsCon = (HttpsURLConnection)con;
+      httpsCon.setSSLSocketFactory(this.sslContext.getSocketFactory());
+    }
+    
     con.setConnectTimeout(connectTimeout);
     con.setReadTimeout(readTimeout);
     con.setRequestProperty("User-Agent", "JCurl");
