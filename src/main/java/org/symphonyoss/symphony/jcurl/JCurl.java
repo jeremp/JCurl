@@ -28,7 +28,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.StringReader;
 import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
 import java.net.MalformedURLException;
+import java.net.Proxy;
 import java.net.URL;
 import java.net.URLConnection;
 import java.security.KeyManagementException;
@@ -121,18 +123,20 @@ public class JCurl {
 
   private String url;
   private String data;
+  
   private String keyStore;
   private String storeType;
   private String storePass;
   private String trustStore;
   private String trustType;
   private String trustPass;
-  private String httpProxyHost;
-  private String httpProxyPort;
-  private String httpsProxyHost;
-  private String httpsProxyPort;
-  private String nonProxyHosts;
   private SSLContext sslContext ;
+  
+  private Proxy httpProxy = Proxy.NO_PROXY ;
+  private Proxy httpsProxy = Proxy.NO_PROXY ;
+
+  private NonProxyUtility nonProxyUtility = new NonProxyUtility("");
+  
   private int verbosity;
   private int connectTimeout;
   private int readTimeout;
@@ -386,12 +390,10 @@ public class JCurl {
 
       switch (url.getProtocol()) {
         case "http":
-          instance.httpProxyHost = url.getHost();
-          instance.httpProxyPort = String.valueOf(url.getPort());
+		  instance.httpProxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(url.getHost(), url.getPort()));
           break;
         case "https":
-          instance.httpsProxyHost = url.getHost();
-          instance.httpsProxyPort = String.valueOf(url.getPort());
+		  instance.httpsProxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(url.getHost(), url.getPort()));
       }
 
       return this;
@@ -404,7 +406,7 @@ public class JCurl {
      * @return
      */
     public Builder nonProxyHosts(String hosts) {
-      instance.nonProxyHosts = hosts;
+	  instance.nonProxyUtility = new NonProxyUtility(hosts);
       return this;
     }
 
@@ -489,13 +491,14 @@ public class JCurl {
       setSystemProperty("javax.net.ssl.trustStore", instance.trustStore);
       setSystemProperty("javax.net.ssl.trustStoreType", instance.trustType);
       setSystemProperty("javax.net.ssl.trustStorePassword", instance.trustPass);
-      */
+      
+	  // we SHOUDL NOT override the JVM proxies
       setSystemProperty("http.proxyHost", instance.httpProxyHost);
       setSystemProperty("http.proxyPort", instance.httpProxyPort);
       setSystemProperty("https.proxyHost", instance.httpsProxyHost);
       setSystemProperty("https.proxyPort", instance.httpsProxyPort);
       setSystemProperty("https.nonProxyHosts", instance.nonProxyHosts);
-
+	  */
       if (instance.verbosity >= 3) {
         System.setProperty("javax.net.debug", "ssl");
       }
@@ -1392,7 +1395,7 @@ public class JCurl {
   public HttpURLConnection connect(String urlString) throws IOException {
     this.url = urlString;
 
-    URLConnection rawCon = new URL(urlString).openConnection();
+    URLConnection rawCon = openConnection(urlString);
 
     if (!(rawCon instanceof HttpURLConnection)) {
       System.err.println("Only http(s) is supported. Connection is of type " + rawCon.getClass());
@@ -1490,6 +1493,25 @@ public class JCurl {
   }
 
   /**
+   * Build a URLConnection with the given URL and check is proxy must be bypassed or not
+   * @param urlString the given URL
+   * @return
+   * @throws IOException 
+   */
+  private URLConnection openConnection(String urlString) throws IOException {
+	URL myURL = new URL(urlString);
+	if ( nonProxyUtility.bypassProxy(myURL) ) {
+	  return myURL.openConnection();
+	} else {
+	  if (urlString.toLowerCase().startsWith("http:")) {
+		return myURL.openConnection(httpProxy);
+	  } else {
+		return myURL.openConnection(httpsProxy);
+	  }
+	}
+  }
+  
+  /**
    * Process response data and, if applicable, HTTPS information. The {@link org.symphonyoss.symphony.jcurl.JCurl.Response} object returned can be printed
    * out with response.print().
    *
@@ -1576,16 +1598,18 @@ public class JCurl {
       }
     }
 
-    if (httpProxyHost != null) {
-      output.append(String.format("-x %s:%s ", httpProxyHost, httpProxyPort));
+    if (httpProxy != null) {
+	  InetSocketAddress socketAddress = (InetSocketAddress)httpProxy.address();
+      output.append(String.format("-x http://%s:%s ", socketAddress.getHostName(), socketAddress.getPort()));
     }
 
-    if (httpsProxyHost != null) {
-      output.append(String.format("-x %s:%s ", httpsProxyHost, httpsProxyPort));
+    if (httpsProxy != null) {
+	  InetSocketAddress socketAddress = (InetSocketAddress)httpsProxy.address();
+      output.append(String.format("-x https://%s:%s ", socketAddress.getHostName(), socketAddress.getPort()));
     }
 
-    if (nonProxyHosts != null) {
-      output.append(String.format("-noproxy %s ", nonProxyHosts));
+    if (nonProxyUtility.getOriginalInput() != null) {
+      output.append(String.format("-noproxy %s ", nonProxyUtility.getOriginalInput()));
     }
 
     if (trustAllHostnames) {
